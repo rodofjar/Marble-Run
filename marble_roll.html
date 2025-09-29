@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Marble on a Curve: y = x - sin(x)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html, body { height: 100%; margin: 0; background:#0e0f12; color:#e8e8ea; font:14px/1.4 system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    .wrap { display:grid; grid-template-rows:auto 1fr; height:100%; }
+    header { padding:10px 14px; display:flex; gap:16px; align-items:center; border-bottom:1px solid #23252c; }
+    header > * { margin:0; }
+    #canvas { width:100%; height:100%; display:block; }
+    .pill { background:#1a1c22; border:1px solid #2b2e36; color:#e8e8ea; padding:6px 10px; border-radius:999px; }
+    .btn { cursor:pointer; }
+    a { color:#9fd3ff; text-decoration:none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <strong>Marble on a Curve</strong>
+    <span class="pill">f(x) = x − sin(x)</span>
+    <label class="pill"><input id="rolling" type="checkbox" checked /> Rolling (solid sphere)</label>
+    <label class="pill">g:
+      <input id="gval" type="number" step="0.1" value="9.81" style="width:5em;background:#0e0f12;color:#e8e8ea;border:1px solid #2b2e36;border-radius:6px;padding:3px 6px;">
+    </label>
+    <button id="reset" class="pill btn">Reset</button>
+    <span style="margin-left:auto;opacity:.7">Tip: edit <code>f</code> / <code>df</code> / <code>d2f</code> in the source to try other curves.</span>
+  </header>
+  <canvas id="canvas"></canvas>
+</div>
+
+<script>
+/**
+ * Curve definition: f, df, d2f
+ * Current: y = x - sin(x)
+ * Replace with your own (ensure derivatives match!)
+ */
+function f(x)      { return x - Math.sin(x); }
+function df(x)     { return 1 - Math.cos(x); }
+function d2f(x)    { return  Math.sin(x);    }
+
+// Simulation params
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const rollingChk = document.getElementById('rolling');
+const gInput = document.getElementById('gval');
+const resetBtn = document.getElementById('reset');
+
+let W = 0, H = 0, dpr = Math.max(1, window.devicePixelRatio || 1);
+function resize() {
+  W = Math.floor(canvas.clientWidth * dpr);
+  H = Math.floor(canvas.clientHeight * dpr);
+  canvas.width = W; canvas.height = H;
+}
+window.addEventListener('resize', resize); resize();
+
+// World scaling
+// x-range and y-range to render; y grows downward on canvas
+const X_MIN = 0, X_MAX = 20;                 // domain shown (can extend to tile)
+const samples = 1000;                        // curve polyline resolution
+let yMin = Infinity, yMax = -Infinity;
+for (let i=0; i<=samples; i++) {
+  const x = X_MIN + (X_MAX - X_MIN) * (i/samples);
+  const y = f(x);
+  if (y < yMin) yMin = y;
+  if (y > yMax) yMax = y;
+}
+// add margins
+const yPad = 0.15*(yMax - yMin || 1);
+yMin -= yPad; yMax += yPad;
+
+// map world (x,y) -> canvas (px)
+function worldToCanvas(x, y) {
+  const u = (x - X_MIN) / (X_MAX - X_MIN);
+  const v = (y - yMin) / (yMax - yMin);
+  return [ u * W, (1 - v) * H ];
+}
+
+// Precompute curve polyline for drawing
+const poly = [];
+for (let i=0; i<=samples; i++) {
+  const x = X_MIN + (X_MAX - X_MIN) * (i/samples);
+  const y = f(x);
+  poly.push(worldToCanvas(x, y));
+}
+
+// Physics state (x, v = dx/dt). Start near left with zero velocity.
+let state0 = { x: X_MIN + 0.2, v: 0 };
+let state   = { x: state0.x,   v: state0.v };
+
+// ODE RHS: dx/dt = v; dv/dt = -(f' f'')/(1+f'^2) v^2 - g f' / ((1+f'^2) * alpha)
+function deriv(s, g, alpha) {
+  const fp = df(s.x);
+  const fpp = d2f(s.x);
+  const denom = 1 + fp*fp;
+  const dv = -(fp*fpp/denom)*s.v*s.v - (g*fp)/(denom*alpha);
+  return { dx: s.v, dv };
+}
+
+// RK4 step
+function rk4Step(s, dt, g, alpha) {
+  const k1 = deriv(s, g, alpha);
+  const s2 = { x: s.x + 0.5*dt*k1.dx, v: s.v + 0.5*dt*k1.dv };
+  const k2 = deriv(s2, g, alpha);
+  const s3 = { x: s.x + 0.5*dt*k2.dx, v: s.v + 0.5*dt*k2.dv };
+  const k3 = deriv(s3, g, alpha);
+  const s4 = { x: s.x + dt*k3.dx,     v: s.v + dt*k3.dv };
+  return {
+    x: s.x + (dt/6)*(k1.dx + 2*k2.dx + 2*k3.dx + k4.dx),
+    v: s.v + (dt/6)*(k1.dv + 2*k2.dv + 2*k3.dv + k4.dv)
+  };
+  function k4() { return deriv({ x: s.x + dt*k3.dx, v: s.v + dt*k3.dv }, g, alpha); }
+}
+
+// Utility: wrap/restart so the animation loops pleasantly
+function wrapState(s) {
+  // If the bead leaves the drawn domain, re-enter on the other side with same speed.
+  if (s.x < X_MIN) s.x += (X_MAX - X_MIN);
+  if (s.x > X_MAX) s.x -= (X_MAX - X_MIN);
+}
+
+// Draw helpers
+function drawCurve() {
+  ctx.beginPath();
+  for (let i=0; i<poly.length; i++) {
+    const [px, py] = poly[i];
+    if (i===0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.lineWidth = 2 * (dpr);
+  ctx.strokeStyle = "#ff5a5a";
+  ctx.stroke();
+}
+function drawGrid() {
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  ctx.lineWidth = 1 * dpr;
+  ctx.strokeStyle = "#2b2e36";
+  // x grid (every 1 unit)
+  for (let x = Math.ceil(X_MIN); x <= Math.floor(X_MAX); x++) {
+    const [px0] = worldToCanvas(x, yMin);
+    const [px1] = worldToCanvas(x, yMax);
+    ctx.beginPath(); ctx.moveTo(px0, 0); ctx.lineTo(px1, H); ctx.stroke();
+  }
+  // y grid (nice steps)
+  const yStep = niceStep(yMin, yMax, 8);
+  for (let y = Math.ceil(yMin/yStep)*yStep; y <= yMax; y += yStep) {
+    const [, py] = worldToCanvas(X_MIN, y);
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke();
+  }
+  ctx.restore();
+}
+function niceStep(min, max, approxTicks) {
+  const span = Math.max(1e-9, max - min);
+  const raw = span / approxTicks;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(raw)));
+  const steps = [1, 2, 2.5, 5, 10].map(m => m*pow10);
+  return steps.reduce((a,b) => Math.abs(b-raw) < Math.abs(a-raw) ? b : a, steps[0]);
+}
+function drawAxisLabels() {
+  ctx.save();
+  ctx.fillStyle = "#aeb4bf";
+  ctx.font = `${12*dpr}px system-ui, sans-serif`;
+  // x ticks
+  for (let x = Math.ceil(X_MIN); x <= Math.floor(X_MAX); x+=2) {
+    const [px, py0] = worldToCanvas(x, yMin);
+    ctx.fillText(`${x}`, px+4*dpr, H-6*dpr);
+  }
+  // y ticks
+  const yStep = niceStep(yMin, yMax, 6);
+  for (let y = Math.ceil(yMin/yStep)*yStep; y <= yMax; y += yStep) {
+    const [px0, py] = worldToCanvas(X_MIN, y);
+    ctx.fillText(y.toFixed(1), 6*dpr, py-4*dpr);
+  }
+  ctx.restore();
+}
+function drawMarble(x, rPx = 8*dpr) {
+  const y = f(x);
+  const [px, py] = worldToCanvas(x, y);
+  // shadow
+  ctx.beginPath();
+  ctx.arc(px + 6*dpr, py + 6*dpr, rPx*0.9, 0, Math.PI*2);
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fill();
+  // body
+  ctx.beginPath();
+  ctx.arc(px, py, rPx, 0, Math.PI*2);
+  ctx.fillStyle = "#e8e8ea";
+  ctx.fill();
+  // highlight
+  ctx.beginPath();
+  ctx.arc(px - rPx*0.35, py - rPx*0.35, rPx*0.35, 0, Math.PI*2);
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.fill();
+}
+
+// Animation loop
+let prev = performance.now();
+function tick(now) {
+  const dtReal = Math.min(0.033, (now - prev) / 1000); // clamp for stability
+  prev = now;
+
+  // Physics step
+  const g = parseFloat(gInput.value) || 9.81;
+  const alpha = rollingChk.checked ? (7/5) : 1; // rolling sphere vs sliding bead
+  // Subdivide for stability on steep spots
+  const sub = 2;
+  const h = dtReal / sub;
+  for (let i=0;i<sub;i++) {
+    state = rk4Step(state, h, g, alpha);
+    wrapState(state);
+  }
+
+  // Draw
+  ctx.fillStyle = "#0e0f12";
+  ctx.fillRect(0,0,W,H);
+  drawGrid();
+  drawCurve();
+  drawAxisLabels();
+  drawMarble(state.x);
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// UI
+resetBtn.addEventListener('click', () => {
+  state = { x: state0.x, v: state0.v };
+});
+</script>
+</body>
+</html>

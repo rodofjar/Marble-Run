@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Marble on a Curve — Canvas Simulation</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#111827; --ink:#e5e7eb; --accent:#60a5fa; --muted:#9ca3af; }
+  body { margin:0; font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { display:grid; grid-template-columns: 320px 1fr; min-height:100vh; }
+  .panel { padding:16px 14px; background:var(--panel); border-right:1px solid #1f2937; }
+  .panel h1 { margin:0 0 10px; font-size:18px; font-weight:600; letter-spacing:0.2px; }
+  .panel .row { margin:10px 0; }
+  .panel label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .panel input[type="text"], .panel input[type="number"] { width:100%; padding:8px 10px; background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .panel input[type="range"] { width:100%; }
+  .panel .inline { display:flex; gap:8px; }
+  .panel .inline > div { flex:1; }
+  .panel .small { font-size:11px; color:#94a3b8; margin-top:4px; }
+  .panel .btn { display:inline-block; padding:8px 10px; border-radius:8px; background:#0f172a; border:1px solid #1f2937; color:var(--ink); cursor:pointer; font-size:12px; }
+  .panel .btn:hover { border-color:#374151; }
+  canvas { width:100%; height:100vh; display:block; }
+  .hint { font-size:12px; color:#93c5fd; margin-top:6px; }
+  /* velocities list */
+  .vel-panel { max-height: 220px; overflow:auto; background:#0f172a; border:1px solid #1f2937; border-radius:8px; padding:8px; }
+  .vel-item { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px dashed rgba(148,163,184,0.15); }
+  .vel-item:last-child { border-bottom:none; }
+  .vel-dot { width:10px; height:10px; border-radius:50%; flex:0 0 10px; border:1px solid rgba(255,255,255,0.35); }
+  .vel-id { width:28px; color:#9ca3af; font-size:11px; }
+  .vel-speed { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside class="panel">
+    <h1>Marble on a Curve</h1>
+
+    <div class="row">
+      <label for="func">Function f(x) (JS):</label>
+      <input id="func" type="text" value="x - Math.sin(x)" />
+      <div class="small">Examples: <code>x - Math.sin(x)</code>, <code>Math.sin(x)</code>, <code>0.2*x*x</code>, <code>x - Math.sin(x) + 2 * Math.cos(x)</code></div>
+    </div>
+
+    <div class="row inline">
+      <div>
+        <label for="xmin">x min</label>
+        <input id="xmin" type="number" step="0.1" value="0" />
+      </div>
+      <div>
+        <label for="xmax">x max</label>
+        <input id="xmax" type="number" step="0.1" value="20" />
+      </div>
+    </div>
+
+    <div class="row inline">
+      <div>
+        <label for="radius">Marble size (px): <span id="radiusVal">8</span></label>
+        <input id="radius" type="range" min="3" max="20" step="1" value="8" />
+      </div>
+      <div>
+        <label for="maxMarbles">Max marbles: <span id="maxVal">30</span></label>
+        <input id="maxMarbles" type="range" min="1" max="100" step="1" value="30" />
+      </div>
+    </div>
+
+    <div class="row inline">
+      <div>
+        <label for="mass">Mass (kg): <span id="massVal">1.0</span></label>
+        <input id="mass" type="range" min="0.1" max="5" step="0.1" value="1.0" />
+      </div>
+      <div>
+        <label for="gravity">Gravity (m/s²): <span id="gVal">9.8</span></label>
+        <input id="gravity" type="range" min="0.5" max="25" step="0.1" value="9.8" />
+      </div>
+    </div>
+
+    <div class="row">
+      <label for="drag">Linear drag (c): <span id="dragVal">0.00</span></label>
+      <input id="drag" type="range" min="0" max="2" step="0.01" value="0.00" />
+      <div class="small">Applies a force <code>-c · v_s</code> along the curve; mass matters.</div>
+    </div>
+
+    <div class="row inline">
+      <div>
+        <label><input id="rolling" type="checkbox" checked /> Rolling (solid sphere)</label>
+      </div>
+      <div>
+        <label><input id="collisions" type="checkbox" /> Collisions</label>
+      </div>
+      <div style="text-align:right">
+        <button class="btn" id="resetBtn">Reset marbles</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <label for="rest">Restitution (bounciness): <span id="restVal">1.00</span></label>
+      <input id="rest" type="range" min="0" max="1" step="0.01" value="1.00" />
+      <div class="small">e = 1 perfectly elastic; e = 0 perfectly inelastic.</div>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="applyBtn">Apply function & domain</button>
+      <div class="hint">Click on the canvas to drop a marble at that x. It snaps to y = f(x) and starts from rest.</div>
+    </div>
+
+    <div class="row">
+      <label>Marble velocities</label>
+      <div id="velList" class="vel-panel small"></div>
+    </div>
+
+    <div class="row small">
+      <div>Rendering notes: the curve is sampled densely and scaled to fit vertically. The simulation uses a semi-implicit integrator with adaptive dt clamped to 60 FPS.</div>
+    </div>
+  </aside>
+
+  <main>
+    <canvas id="canvas"></canvas>
+  </main>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { alpha:false });
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  // UI elements
+  const funcInput = document.getElementById('func');
+  const xminInput = document.getElementById('xmin');
+  const xmaxInput = document.getElementById('xmax');
+  const radiusInput = document.getElementById('radius');
+  const maxInput = document.getElementById('maxMarbles');
+  const massInput = document.getElementById('mass');
+  const gravityInput = document.getElementById('gravity');
+  const dragInput = document.getElementById('drag');
+  const rollingChk = document.getElementById('rolling');
+  const collisionsChk = document.getElementById('collisions');
+  const applyBtn = document.getElementById('applyBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const restInput = document.getElementById('rest');
+
+  const radiusVal = document.getElementById('radiusVal');
+  const maxVal = document.getElementById('maxVal');
+  const massVal = document.getElementById('massVal');
+  const gVal = document.getElementById('gVal');
+  const dragVal = document.getElementById('dragVal');
+  const restVal = document.getElementById('restVal');
+  const velListEl = document.getElementById('velList');
+
+  // State
+  let W=0, H=0, PAD=20;
+  let f = (x)=> x - Math.sin(x);
+  let xmin = 0, xmax = 20;
+  let samples = []; // {x, y, yprime}
+  let yMin=0, yMax=1;
+  let marbles = [];
+  let lastT = 0;
+  let totalSPix = 0; // total pixel arclength of the curve (for collisions along s)
+
+  const settings = {
+    radius: Number(radiusInput.value),
+    maxMarbles: Number(maxInput.value),
+    mass: Number(massInput.value),
+    g: Number(gravityInput.value),
+    drag: Number(dragInput.value),
+    rolling: rollingChk.checked,
+    collisions: collisionsChk ? collisionsChk.checked : false,
+    restitution: Number(restInput ? restInput.value : 1)
+  };
+
+  // Helpers: coordinate transforms
+  function xToCanvas(x){
+    return PAD + (x - xmin) / (xmax - xmin) * (W - 2*PAD);
+  }
+  function yToCanvas(y){
+    // y increases upward in math; canvas has y downward.
+    const t = (y - yMin) / (yMax - yMin);
+    const pix = PAD + (1 - t) * (H - 2*PAD);
+    return pix;
+  }
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+  // Parse f(x) from string safely-ish (user-supplied JS math).
+  function parseFunc(str){
+    // Support Math.* without prefixing, by letting users write Math.sin etc.
+    // We expose only x and Math in the scope:
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('x','Math',`"use strict"; return (${str});`);
+    return (x)=> fn(x, Math);
+  }
+
+  function finiteDiffYp(f, x, h=1e-4){
+    const y1 = f(x - h), y2 = f(x + h);
+    return (y2 - y1) / (2*h);
+  }
+
+  function resampleCurve(){
+    xmin = Number(xminInput.value);
+    xmax = Number(xmaxInput.value);
+    const N = 1200;
+    samples.length = 0;
+    yMin = +Infinity; yMax = -Infinity;
+    for(let i=0; i<=N; i++){
+      const x = xmin + (i/N) * (xmax - xmin);
+      let y;
+      try { y = f(x); }
+      catch(e){ y = NaN; }
+      const yp = Number.isFinite(y) ? finiteDiffYp(f, x) : 0;
+      if (Number.isFinite(y)){
+        yMin = Math.min(yMin, y);
+        yMax = Math.max(yMax, y);
+      }
+      samples.push({x, y, yp});
+    }
+    if (!isFinite(yMin) || !isFinite(yMax) || yMin===yMax){
+      // fallback to avoid division by zero
+      yMin = -1; yMax = 1;
+    } else {
+      // add a little headroom
+      const pad = 0.06 * (yMax - yMin);
+      yMin -= pad; yMax += pad;
+    }
+
+    // After yMin/yMax are known, compute canvas positions and cumulative pixel arclength
+    totalSPix = 0;
+    let prevCx=null, prevCy=null;
+    for (let i=0; i<samples.length; i++){
+      const s = samples[i];
+      const cx = xToCanvas(s.x);
+      const cy = Number.isFinite(s.y) ? yToCanvas(s.y) : NaN;
+      s.cx = cx; s.cy = cy;
+      if (i === 0 || !Number.isFinite(cy) || prevCx===null || !Number.isFinite(prevCy)){
+        s.sp = 0;
+      } else {
+        const ds = Math.hypot(cx - prevCx, cy - prevCy);
+        totalSPix += ds;
+        s.sp = totalSPix;
+      }
+      prevCx = cx; prevCy = cy;
+    }
+  }
+
+  function resize(){
+    W = canvas.clientWidth * DPR;
+    H = canvas.clientHeight * DPR;
+    canvas.width = W; canvas.height = H;
+  }
+
+  // Marble model: move along-curve
+  class Marble {
+    constructor(x0){
+      // Clamp x into domain
+      this.x = clamp(x0, xmin, xmax);
+      this.vs = 0; // along-curve speed (signed)
+      this.color = '#60a5fa';
+      // jitter hue for variety
+      const hue = 210 + (Math.random()*40 - 20);
+      this.color = `hsl(${hue} 90% 70%)`;
+    }
+    step(dt){
+      // Sample local slope
+      const yp = finiteDiffYp(f, this.x);
+      const root = Math.hypot(1, yp);             // sqrt(1+yp^2)
+      const sinTheta = yp / root;                  // dy/ds
+      const beta = settings.rolling ? 0.4 : 0.0;   // I/(m r^2) solid sphere=2/5=0.4
+      const g = settings.g;
+      const m = settings.mass;
+      const c = settings.drag;
+
+      // Along-curve acceleration
+      // Gravity component along +x arclength (increasing x) is -g*sin(theta)
+      let a_t = (-g * sinTheta) / (1 + beta);
+
+      // Linear drag along s (proportional to vs), mass-scaled
+      a_t += (-c / Math.max(m, 1e-6)) * this.vs;
+
+      // Integrate (semi-implicit)
+      this.vs += a_t * dt;
+
+      // Convert to x-velocity and advance
+      const vx = this.vs / root;
+      this.x += vx * dt;
+
+      // Wrap domain to keep it looping
+      if (this.x < xmin){ this.x = xmax - (xmin - this.x) % (xmax - xmin); }
+      if (this.x > xmax){ this.x = xmin + (this.x - xmax) % (xmax - xmin); }
+    }
+    draw(){
+      const y = f(this.x);
+      const cx = xToCanvas(this.x), cy = yToCanvas(y);
+      const r = settings.radius * DPR;
+
+      // Shadow
+      ctx.beginPath();
+      ctx.arc(cx + 2*DPR, cy + 2*DPR, r, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fill();
+
+      // Marble
+      const grad = ctx.createRadialGradient(cx - 0.4*r, cy - 0.4*r, 0, cx, cy, r);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.2, this.color);
+      grad.addColorStop(1, '#1f2937');
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI*2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Tiny spec highlight
+      ctx.beginPath();
+      ctx.arc(cx - 0.5*r, cy - 0.5*r, 0.15*r, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fill();
+    }
+  }
+
+  function drawGrid(){
+    ctx.save();
+    ctx.lineWidth = 1*DPR;
+    // background
+    ctx.fillStyle = '#0b0f14';
+    ctx.fillRect(0,0,W,H);
+
+    // axes
+    ctx.strokeStyle = '#1f2937';
+    ctx.strokeRect(PAD, PAD, W - 2*PAD, H - 2*PAD);
+
+    // x/y tick marks (5 each)
+    ctx.fillStyle = '#6b7280';
+    ctx.font = `${11*DPR}px ui-sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    for (let i=0;i<=5;i++){
+      const xx = xmin + (i/5)*(xmax - xmin);
+      const cx = xToCanvas(xx);
+      ctx.beginPath();
+      ctx.moveTo(cx, PAD);
+      ctx.lineTo(cx, H-PAD);
+      ctx.strokeStyle = 'rgba(148,163,184,0.12)';
+      ctx.stroke();
+
+      ctx.fillText(xx.toFixed(1), cx, H - PAD + 4*DPR);
+    }
+
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let j=0;j<=5;j++){
+      const yy = yMin + (j/5)*(yMax - yMin);
+      const cy = yToCanvas(yy);
+      ctx.beginPath();
+      ctx.moveTo(PAD, cy);
+      ctx.lineTo(W-PAD, cy);
+      ctx.strokeStyle = 'rgba(148,163,184,0.12)';
+      ctx.stroke();
+
+      ctx.fillText(yy.toFixed(1), PAD - 6*DPR, cy);
+    }
+    ctx.restore();
+  }
+
+  function drawCurve(){
+    ctx.save();
+    ctx.lineWidth = 2*DPR;
+    ctx.strokeStyle = '#ef4444';
+    ctx.beginPath();
+    let moved=false;
+    for (let i=0;i<samples.length;i++){
+      const s = samples[i];
+      if (!Number.isFinite(s.y)) { moved=false; continue; }
+      const cx = xToCanvas(s.x), cy = yToCanvas(s.y);
+      if (!moved){ ctx.moveTo(cx,cy); moved=true; }
+      else ctx.lineTo(cx,cy);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawMarbles(){
+    for (let m of marbles){ m.draw(); }
+  }
+
+  function renderVelocities(){
+    if (!velListEl) return;
+    if (!marbles.length){
+      velListEl.innerHTML = '<div class="small" style="color:#94a3b8">No marbles yet. Click the canvas to drop one.</div>';
+      return;
+    }
+    // Build stacked list with color dots and signed along-curve velocity (m/s)
+    let html = '';
+    for (let i=0; i<marbles.length; i++){
+      const m = marbles[i];
+      const v = m.vs; // along-curve signed velocity
+      html += `
+        <div class="vel-item">
+          <span class="vel-dot" style="background:${m.color}"></span>
+          <span class="vel-id">#${i+1}</span>
+          <span class="vel-speed">v<sub>s</sub> = ${v.toFixed(2)} m/s</span>
+        </div>`;
+    }
+    velListEl.innerHTML = html;
+  }
+
+  function step(dt){
+    // dt in seconds
+    for (let m of marbles){ m.step(dt); }
+  }
+
+  function frame(ts){
+    if (!lastT) lastT = ts;
+    const dtMs = ts - lastT;
+    lastT = ts;
+
+    // clamp dt to avoid jumps
+    const dt = Math.min(Math.max(dtMs, 0), 50) / 1000;
+
+    step(dt);
+
+  // Collisions after integration
+  handleCollisions();
+
+    drawGrid();
+    drawCurve();
+    drawMarbles();
+  renderVelocities();
+
+    requestAnimationFrame(frame);
+  }
+
+  // Interactions
+  canvas.addEventListener('click', (e)=>{
+    const rect = canvas.getBoundingClientRect();
+    const xpix = (e.clientX - rect.left) * DPR;
+
+    // Convert to math x
+    const x = xmin + ((xpix - PAD) / (W - 2*PAD)) * (xmax - xmin);
+    if (!isFinite(x)) return;
+
+    const m = new Marble(x);
+    marbles.push(m);
+    if (marbles.length > settings.maxMarbles){
+      marbles.splice(0, marbles.length - settings.maxMarbles);
+    }
+    // update velocity list immediately
+    renderVelocities();
+  });
+
+  function applySettingsUI(){
+    settings.radius = Number(radiusInput.value);
+    settings.maxMarbles = Number(maxInput.value);
+    settings.mass = Number(massInput.value);
+    settings.g = Number(gravityInput.value);
+    settings.drag = Number(dragInput.value);
+    settings.rolling = rollingChk.checked;
+    settings.collisions = collisionsChk ? collisionsChk.checked : false;
+    settings.restitution = Number(restInput ? restInput.value : 1);
+
+    radiusVal.textContent = settings.radius.toString();
+    maxVal.textContent = settings.maxMarbles.toString();
+    massVal.textContent = settings.mass.toFixed(1);
+    gVal.textContent = settings.g.toFixed(1);
+    dragVal.textContent = settings.drag.toFixed(2);
+    if (restVal) restVal.textContent = settings.restitution.toFixed(2);
+  }
+
+  radiusInput.addEventListener('input', applySettingsUI);
+  maxInput.addEventListener('input', applySettingsUI);
+  massInput.addEventListener('input', applySettingsUI);
+  gravityInput.addEventListener('input', applySettingsUI);
+  dragInput.addEventListener('input', applySettingsUI);
+  rollingChk.addEventListener('change', applySettingsUI);
+  if (collisionsChk) collisionsChk.addEventListener('change', applySettingsUI);
+  if (restInput) restInput.addEventListener('input', applySettingsUI);
+
+  applyBtn.addEventListener('click', ()=>{
+    // Parse function and resample
+    try {
+      f = parseFunc(funcInput.value);
+      // Probe once to surface syntax errors
+      void f(0.123);
+    } catch(err){
+      alert('Error parsing function: ' + err.message);
+      return;
+    }
+    resampleCurve();
+  });
+
+  resetBtn.addEventListener('click', ()=>{
+    marbles.length = 0;
+    renderVelocities();
+  });
+
+  window.addEventListener('resize', ()=>{
+    resize();
+    resampleCurve();
+  });
+
+  // Init
+  function init(){
+    resize();
+    applySettingsUI();
+    resampleCurve();
+    requestAnimationFrame(frame);
+  }
+  init();
+
+  // --- Collisions helpers ---
+  function xToSPix(x){
+    // Map x in [xmin,xmax] to cumulative pixel arclength along the curve
+    if (!samples.length) return 0;
+    // binary search by x index (samples x strictly increasing)
+    let lo=0, hi=samples.length-1;
+    while (lo+1 < hi){
+      const mid = (lo+hi)>>1;
+      if (samples[mid].x <= x) lo = mid; else hi = mid;
+    }
+    const s0 = samples[lo], s1 = samples[hi];
+    const t = (x - s0.x) / Math.max((s1.x - s0.x), 1e-9);
+    const segLen = Math.hypot((s1.cx - s0.cx), (s1.cy - s0.cy));
+    const sp = (s0.sp ?? 0) + Math.max(0, Math.min(1, t)) * segLen;
+    return sp;
+  }
+
+  function sPixToX(sp){
+    // Wrap sp into [0,totalSPix)
+    if (totalSPix <= 0) return xmin;
+    let s = sp % totalSPix; if (s < 0) s += totalSPix;
+    // binary search for segment where samples[i].sp <= s <= samples[i+1].sp
+    let lo=0, hi=samples.length-1;
+    while (lo+1 < hi){
+      const mid = (lo+hi)>>1;
+      if ((samples[mid].sp ?? 0) <= s) lo = mid; else hi = mid;
+    }
+    const a = samples[lo], b = samples[hi];
+    const sA = a.sp ?? 0, sB = b.sp ?? totalSPix;
+    const seg = Math.max(sB - sA, 1e-9);
+    const t = (s - sA) / seg;
+    return a.x + t * (b.x - a.x);
+  }
+
+  function resolvePair(iA, iB, wrap=false){
+    const rPix = settings.radius * DPR;
+    const e = clamp(settings.restitution ?? 1, 0, 1);
+    const m1 = settings.mass, m2 = settings.mass; // all marbles share mass
+
+    // s positions
+    let s1 = iA.s, s2 = iB.s;
+    let dist = s2 - s1;
+    if (wrap){
+      // distance through wrap
+      dist = (s2 + totalSPix) - s1;
+    }
+    if (dist < 0) dist += totalSPix;
+
+    const minDist = 2*rPix;
+    if (dist >= minDist) return; // no overlap
+
+    // 1D collision along tangent: update vs using restitution
+    const v1 = iA.ref.vs, v2 = iB.ref.vs;
+    const denom = m1 + m2;
+    const v1p = ((m1 - e*m2)*v1 + (1+e)*m2*v2) / Math.max(denom, 1e-9);
+    const v2p = ((m2 - e*m1)*v2 + (1+e)*m1*v1) / Math.max(denom, 1e-9);
+    iA.ref.vs = v1p; iB.ref.vs = v2p;
+
+    // Positional correction to remove overlap, split evenly
+    const overlap = minDist - dist + 0.01; // small bias to avoid re-collide
+    const shift = overlap * 0.5;
+    if (!wrap){
+      s1 -= shift; s2 += shift;
+    } else {
+      // through wrap: keep s1 smaller, move s2 forward across wrap
+      s1 -= shift; s2 += shift;
+    }
+    // Normalize and apply
+    s1 = ((s1 % totalSPix) + totalSPix) % totalSPix;
+    s2 = ((s2 % totalSPix) + totalSPix) % totalSPix;
+    iA.ref.x = sPixToX(s1);
+    iB.ref.x = sPixToX(s2);
+  }
+
+  function handleCollisions(){
+    if (!settings.collisions) return;
+    if (marbles.length < 2) return;
+    if (totalSPix <= 0) return;
+
+    // Map marbles to sPix and sort
+    const arr = marbles.map((m, idx)=> ({ idx, ref:m, s: xToSPix(m.x) }));
+    arr.sort((a,b)=> a.s - b.s);
+
+    // Neighbor pairs
+    for (let i=0; i<arr.length-1; i++){
+      resolvePair(arr[i], arr[i+1], false);
+    }
+    // Wrap-around pair (last with first)
+    resolvePair(arr[arr.length-1], arr[0], true);
+  }
+})();
+</script>
+</body>
+</html>

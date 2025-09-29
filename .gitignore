@@ -1,0 +1,17 @@
+# OS-generated files
+Thumbs.db
+.DS_Store
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Node/npm (future-proofing if tooling is added)
+node_modules/
+.npm/
+
+# Build/coverage outputs
+coverage/
+dist/
+build/
