@@ -11,6 +11,7 @@ Simple browser-based experiments for simulating marble movement and physics-insp
 
 - `marble_roll.html` – Prototype focused on basic marble rolling behavior.
 - `marble_sim_1.html` – Alternate simulation experiment with different parameters.
+- `marble_sim_sound.html` – Duplicate of `marble_sim_1.html` for experimenting with audio cues.
 - `x_sinx.R` – Supporting R script, likely for data exploration or plotting.
 
 ## Contributing
